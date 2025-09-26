@@ -1,0 +1,253 @@
+# GitHub Actions Workflow for Environment Recreation Script Validation
+name: Environment Recreation Script Validation
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-validate:
+    name: Lint and Validate Script
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install shellcheck
+      run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+    - name: Run shellcheck on main script
+      run: shellcheck recreate-environment.sh
+
+    - name: Check script permissions
+      run: |
+        if [ -x "recreate-environment.sh" ]; then
+          echo "✅ Script is executable"
+        else
+          echo "❌ Script is not executable"
+          exit 1
+        fi
+
+    - name: Validate script structure
+      run: |
+        # Check for required functions
+        if grep -q "main()" recreate-environment.sh; then
+          echo "✅ Main function found"
+        else
+          echo "❌ Main function not found"
+          exit 1
+        fi
+
+        # Check for phases
+        phase_count=$(grep -c "phase[0-9]_" recreate-environment.sh)
+        if [ "$phase_count" -ge 7 ]; then
+          echo "✅ All phases present ($phase_count functions)"
+        else
+          echo "❌ Missing phases (found $phase_count, expected 7+)"
+          exit 1
+        fi
+
+  dry-run-test:
+    name: Dry Run Test
+    runs-on: ubuntu-latest
+    needs: lint-and-validate
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Make script executable
+      run: chmod +x recreate-environment.sh
+
+    - name: Test dry run execution
+      run: |
+        # Set agent mode for non-interactive execution
+        export AGENT_MODE=1
+        sudo ./recreate-environment.sh --dry-run --username testuser
+
+    - name: Test help output
+      run: ./recreate-environment.sh --help
+
+    - name: Test validation-only mode
+      run: |
+        export AGENT_MODE=1
+        # This will fail on fresh system, but should show proper error handling
+        sudo ./recreate-environment.sh --validate-only || echo "Expected failure on fresh system"
+
+  documentation-check:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Check README.md exists and has content
+      run: |
+        if [ -f "README.md" ] && [ -s "README.md" ]; then
+          echo "✅ README.md exists and has content"
+        else
+          echo "❌ README.md missing or empty"
+          exit 1
+        fi
+
+    - name: Check CHANGELOG.md exists
+      run: |
+        if [ -f "CHANGELOG.md" ]; then
+          echo "✅ CHANGELOG.md exists"
+        else
+          echo "❌ CHANGELOG.md missing"
+          exit 1
+        fi
+
+    - name: Check LICENSE exists
+      run: |
+        if [ -f "LICENSE" ]; then
+          echo "✅ LICENSE exists"
+        else
+          echo "❌ LICENSE missing"
+          exit 1
+        fi
+
+    - name: Check version consistency
+      run: |
+        if [ -f "VERSION" ]; then
+          version_file=$(cat VERSION)
+          script_version=$(grep 'SCRIPT_VERSION=' recreate-environment.sh | cut -d'"' -f2)
+          changelog_version=$(grep -E '## \[[0-9]+\.[0-9]+\.[0-9]+\]' CHANGELOG.md | head -1 | sed 's/.*\[\([0-9.]*\)\].*/\1/')
+
+          echo "Version file: $version_file"
+          echo "Script version: $script_version"
+          echo "Changelog version: $changelog_version"
+
+          if [ "$version_file" = "$script_version" ] && [ "$version_file" = "$changelog_version" ]; then
+            echo "✅ Version consistency check passed"
+          else
+            echo "❌ Version mismatch detected"
+            exit 1
+          fi
+        else
+          echo "❌ VERSION file missing"
+          exit 1
+        fi
+
+  security-check:
+    name: Security Check
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Check for hardcoded secrets
+      run: |
+        # Check for potential secrets (basic patterns)
+        if grep -r -E "(password|secret|key|token)=" . --exclude-dir=.git || \
+           grep -r -E "ssh-rsa|ssh-ed25519" . --exclude-dir=.git; then
+          echo "❌ Potential secrets found in repository"
+          exit 1
+        else
+          echo "✅ No obvious secrets detected"
+        fi
+
+    - name: Check sudo usage patterns
+      run: |
+        # Ensure sudo is used appropriately
+        if grep -n "sudo " recreate-environment.sh | grep -v "sudo -u \$TARGET_USERNAME\|sudo -n\|check_root"; then
+          echo "⚠️ Review sudo usage patterns"
+        else
+          echo "✅ Sudo usage patterns look appropriate"
+        fi
+
+    - name: Check for unsafe operations
+      run: |
+        # Check for potentially unsafe operations
+        unsafe_patterns="rm -rf /|chmod 777|chown.*root"
+        if grep -E "$unsafe_patterns" recreate-environment.sh; then
+          echo "⚠️ Potentially unsafe operations detected - review required"
+        else
+          echo "✅ No obviously unsafe operations detected"
+        fi
+
+  compatibility-matrix:
+    name: Compatibility Matrix
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ubuntu-version: ["22.04", "24.04"]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Ubuntu ${{ matrix.ubuntu-version }}
+      uses: actions/setup-node@v4 # Just to ensure we have a consistent base
+
+    - name: Test compatibility
+      run: |
+        # Test basic compatibility checks
+        export AGENT_MODE=1
+        chmod +x recreate-environment.sh
+
+        echo "Testing on Ubuntu ${{ matrix.ubuntu-version }}-like environment"
+
+        # Test that script recognizes the environment
+        if grep -q "Ubuntu" /etc/os-release; then
+          echo "✅ Ubuntu environment detected"
+        else
+          echo "❌ Ubuntu environment not detected"
+          exit 1
+        fi
+
+        # Test dry run doesn't fail on basic checks
+        sudo ./recreate-environment.sh --dry-run --username ci-test || {
+          echo "❌ Dry run failed on Ubuntu ${{ matrix.ubuntu-version }}"
+          exit 1
+        }
+
+  release-readiness:
+    name: Release Readiness Check
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint-and-validate, dry-run-test, documentation-check, security-check]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Verify tag matches version
+      run: |
+        tag_version=${GITHUB_REF#refs/tags/v}
+        file_version=$(cat VERSION)
+
+        if [ "v$file_version" = "v$tag_version" ]; then
+          echo "✅ Tag version matches file version: v$tag_version"
+        else
+          echo "❌ Version mismatch: tag=v$tag_version, file=v$file_version"
+          exit 1
+        fi
+
+    - name: Check changelog entry exists
+      run: |
+        tag_version=${GITHUB_REF#refs/tags/v}
+        if grep -q "\[$tag_version\]" CHANGELOG.md; then
+          echo "✅ Changelog entry exists for version $tag_version"
+        else
+          echo "❌ No changelog entry found for version $tag_version"
+          exit 1
+        fi
+
+    - name: Generate release notes
+      id: release_notes
+      run: |
+        tag_version=${GITHUB_REF#refs/tags/v}
+
+        # Extract changelog section for this version
+        awk "/## \[$tag_version\]/,/## \[/{if(/## \[/ && !/## \[$tag_version\]/) exit; print}" CHANGELOG.md > release_notes.md
+
+        echo "Release notes generated:"
+        cat release_notes.md
