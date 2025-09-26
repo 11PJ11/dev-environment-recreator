@@ -1,0 +1,47 @@
+# Environment Recreation Script - Git Ignore
+
+# Log files
+*.log
+logs/
+/tmp/
+
+# Backup files
+*.backup
+*.bak
+*.orig
+
+# Checkpoint files
+checkpoints/
+/tmp/env-recreation-checkpoints/
+/tmp/env-recreation-backup/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Runtime files
+*.pid
+*.lock
+
+# Sensitive data (if any)
+secrets/
+private/
+*.key
+*.pem
+*.crt
+
+# Cache files
+.cache/
+*.cache
+
+# Temporary files
+temp/
+temporary/
+*.tmp
