@@ -27,7 +27,7 @@ A comprehensive, agent-first Linux environment recreation script designed to rec
 
 ```bash
 # Download the script
-git clone https://github.com/yourusername/dev-environment-recreator.git
+git clone https://github.com/11PJ11/dev-environment-recreator.git
 cd dev-environment-recreator
 
 # Make executable
